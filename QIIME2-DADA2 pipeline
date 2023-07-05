@@ -1,0 +1,161 @@
+#To activate this environment, use
+#
+#     $ conda activate qiime2-2022.2
+#
+# To deactivate an active environment, use
+#
+#     $ conda deactivate
+
+
+#####Importando arquivos para qiime###
+
+qiime tools import \
+   --type 'SampleData[PairedEndSequencesWithQuality]' \
+   --input-path /home/modolonfluvio/Feather/Analises-3\
+   --input-format CasavaOneEightSingleLanePerSampleDirFmt \
+   --output-path /home/modolonfluvio/Feather/outputs-analises3/feather-paired-end-sequences.qza
+   
+##Não precisamos de demultiplexing, uma vez que os arquivos vieram prontos da facility###
+##Mas podemos visualizar o estado do nosso arquivo já demutiplexed####
+
+qiime demux summarize \
+  --i-data feather-paired-end-sequences.qza \
+  --o-visualization demux.qzv
+
+#>>>Save the output in your local machine
+
+ ######Removendo primers#######
+
+qiime cutadapt trim-paired \
+   --i-demultiplexed-sequences feather-paired-end-sequences.qza \
+   --p-cores 6 \
+   --p-front-f GTGYCAGCMGCCGCGGTAA \
+   --p-front-r GGACTACNVGGGTWTCTAAT \
+   --o-trimmed-sequences primer-trimmed-corals-paired-end-sequences.qza \
+   --verbose \
+   &> primer_trimming.log
+   
+   
+################CHECANDO A QUALIDADE DAS SEQUENCIAS E PLOTS#####
+   
+
+qiime demux summarize \
+   --i-data primer-trimmed-corals-paired-end-sequences.qza \
+   --o-visualization primer-trimmed-corals-paired-end-sequences.qzv \
+
+#>>>Save the output in your local machine
+
+-----------Com base neste SUMMARY, devo escolher as posições no nucleotideos para cortar---
+
+Abre o output .qvz em view.qiime2.org
+
+
+######Trimando e filtrando########
+
+qiime dada2 denoise-paired \
+--p-n-threads 12 \
+--i-demultiplexed-seqs primer-trimmed-corals-paired-end-sequences.qza \
+--p-min-overlap 7 \
+--p-trim-left-f 0 \
+--p-trunc-len-f 132 \
+--p-trim-left-r 0 \
+--p-trunc-len-r 130 \
+--output-dir DADA2_denoising_output \
+--verbose \
+&> DADA2_denoising.log
+
+→ table.qza é meu feature table
+
+#>>>Save the output in your local machine
+
+#############Summarise and visualise DADA2 results######
+# Denoising stats
+qiime metadata tabulate \
+--m-input-file denoising_stats.qza \
+--o-visualization denoising_stats.qzv \
+
+→Saved Visualization to: denoising_stats.qzv
+
+#>>>Save the output in your local machine
+
+############FeatureTable and FeatureData summaries##################
+
+qiime metadata tabulate \
+--m-input-file table.qza \
+--o-visualization table.qzv \
+
+#>>>Save the output in your local machine
+
+qiime feature-table tabulate-seqs \
+ 	--i-data representative_sequences.qza \
+ 	--o-visualization rep-seqs.qzv
+
+#>>>Save the output in your local machine
+
+____________________________________________________________________________________________________
+tmux attach -t feather
+____________________________________________________________________________________________________
+
+################Assign taxonomy to features with SILVA 138########
+# Get SILVA database 138
+mkdir /home/modolonfluvio/Feather/paired-reference
+cd paired-reference
+mkdir silva-138
+cd silva-138
+wget https://data.qiime2.org/2022.2/common/silva-138-99-tax-515-806.qza
+wget https://data.qiime2.org/2022.2/common/silva-138-99-seqs-515-806.qza
+
+→ obs: essa versão já está pré-processada para a região V4, sem precisar fazer a PCR virtual
+Please cite the following references if you use any of these pre-formatted files:
+Michael S Robeson II, Devon R O’Rourke, Benjamin D Kaehler, Michal Ziemski, Matthew R Dillon, Jeffrey T Foster, Nicholas A Bokulich. RESCRIPt: Reproducible sequence taxonomy reference database management for the masses. bioRxiv 2020.10.05.326504; doi: https://doi.org/10.1101/2020.10.05.326504
+The files above were downloaded and processed from the SILVA 138 release data using the RESCRIPt plugin and q2-feature-classifier. Sequences were downloaded, reverse-transcribed, and filtered to remove sequences based on length, presence of ambiguous nucleotides and/or homopolymer. Taxonomy was parsed to generate even 7-level rank taxonomic labels, including species labels. Sequences and taxonomies were dereplicated using RESCRIPt. Sequences and taxonomies representing the 515F/806R region of the 16S SSU rRNA gene were extracted with q2-feature-classifier, followed by dereplication with RESCRIPt.
+
+
+mkdir /home/modolonfluvio/Feather/outputs-analises3/taxonomy
+cd taxonomy
+
+# Train the classifier on this region
+qiime feature-classifier fit-classifier-naive-bayes \
+--i-reference-reads silva-138-99-seqs-515-806.qza \
+--i-reference-taxonomy silva-138-99-tax-515-806.qza \
+--o-classifier classifier_16S_V4.qza \
+--verbose \
+&> 16S_V4_classifier.log
+
+
+# Classify rep seqs
+######This produces the QIIME2 artifact classified_rep_seqs.qza.######couple hours###
+qiime feature-classifier classify-sklearn \
+--i-classifier /home/modolonfluvio/Feather/paired-reference/silva-138/classifier_16S_V4.qza \
+--i-reads /home/modolonfluvio/Feather/outputs-analises3/DADA2_denoising_output/representative_sequences.qza \
+--o-classification classified_rep_seqs.qza
+
+
+→ classified_rep_seqs.qza - esse é meu arquivo taxonomy
+
+#>>>Save the output in your local machine
+
+____________________________________________________________________________________________
+# Tabulate the features, their taxonomy and the confidence of taxonomy assignment
+#apenas para checar…
+qiime metadata tabulate \
+--m-input-file classified_rep_seqs.qza \
+--o-visualization classified_rep_seqs.qzv
+
+#>>>Save the output in your local machine
+_____________________________________________________________
+########Create a phylogenetic tree#############
+# The pipeline requires only the rep seqs, not the classified rep seqs
+mkdir /home/modolonfluvio/Feather/outputs-analises3/tree
+cd tree
+qiime phylogeny align-to-tree-mafft-fasttree \
+--i-sequences /home/modolonfluvio/Feather/outputs-analises3/DADA2_denoising_output/representative_sequences.qza \
+--output-dir phylogenetic_tree \
+--p-n-threads 12 \
+--verbose \
+&> phylogenetic_tree_generation.log
+
+
+→ rooted_tree.qza esse é meu arquivo tree
+
+#>>>Save the output in your local machine
