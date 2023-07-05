@@ -1,0 +1,106 @@
+library(ComplexUpset)
+library(MicrobiotaProcess)
+#library(UpSetR)
+library(microbiome)
+library(qiime2R)
+library(phyloseq)
+library(vegan)
+library(ggplot2)      # graphics
+library(readxl)       # necessary to import the data from Excel file
+library(RColorBrewer)
+
+
+##importdata##
+setwd("C:/Users/fmodo/Documents/Analises-4-paired/outputs-qiime2/files-for-phyloseq/")
+
+ps <- qza_to_phyloseq(features = "table.qza",
+                      taxonomy = "classified_rep_seqs.qza", 
+                      metadata = "Complete-metadata-feather4.tsv",
+                      tree =  "rooted_tree.qza")
+
+
+##ocultar/retirar ASVs n?o desejadas na an?lise## 
+
+sub1 <- subset_taxa(ps, !Kingdom %in% c("Eukaryota", "Unassigned"))
+
+sub2 <- subset_taxa(sub1, !Phylum %in% c("Ciliophora"))
+
+sub2.2 <- subset_taxa(sub2, !Order %in% c("Chloroplast"))
+
+ps <- subset_taxa(sub2.2, !Family %in% c("Mitochondria"))
+
+ps
+
+
+
+######Extract shared ASVs with MicrobiotaProcess
+
+## S4 method for signature 'phyloseq'
+ps.venn <- get_upset(ps, factorNames="Portion2")
+ps.venn
+
+
+###getting table
+write.table(ps.venn, "/Users/fmodo/Documents/Analises-4-paired/Resultados/Shared OTUS/shared.txt", row.names = TRUE)
+
+
+
+###########
+# Plot
+
+c.upset.fle <- upset(ps.venn, "Portion2", name='portion')
+
+upset.flu <- upset(ps.venn, sets.bar.color = "#d056e9", order.by = "freq", nsets = 7, empty.intersections = "on", mb.ratio = c(0.6, 0.4), point.size = 2.8,line.size = 1)
+
+upset.flu
+
+########################
+#piechart - depois dos dados da tabela serem tratados, crio piecharts
+
+all <- read.table("/Users/fmodo/Documents/Analises-4-paired/Resultados/Shared OTUS/shared-all-piechart.txt", header=TRUE)
+
+cri.cor <- read.table("/Users/fmodo/Documents/Analises-4-paired/Resultados/Shared OTUS/shared-cri-coral-piechart.txt",header=TRUE)
+
+# Basic piechart
+pie.all <- ggplot(all, aes(x="soma", y=Family, fill=soma)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0)
+
+pie.all
+
+
+# Basic piechart
+pie.cc <- ggplot(cri.cor, aes(x=Family, y=soma, fill=Family)) +
+  geom_col(color = "black") +
+  coord_polar("y", start = 0) + 
+  geom_text(aes(label = paste0(round(soma))), 
+            position = position_stack(vjust = 0.5)) +
+  theme(panel.background = element_blank(),
+        axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(), 
+        plot.title = element_text(hjust = 0.5, size = 18)) +
+  ggtitle("Pie chart of Diamond Color (ggplot2)") +
+  scale_fill_brewer(palette = "Set1")
+
+pie.cc
+
+
+#############
+#dunut chart
+install.packages("lessR")
+
+library(lessR)
+
+# Sample data of the package
+#data <- rd("Employee")
+
+# Donut chart
+PieChart(soma, data = cri.cor,
+         fill = "viridis",
+         main = NULL,
+         color = "black",
+         lwd = 1.5,
+         values_color = c(rep("white", 4), 1),
+         values_size = 0.85)
