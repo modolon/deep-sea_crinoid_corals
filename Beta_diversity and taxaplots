@@ -1,0 +1,309 @@
+library(devtools)
+#install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+library(pairwiseAdonis)
+library(qiime2R)
+library(phyloseq)
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(gplots)
+library(qiime2R)
+library(vegan)
+library(DESeq2)
+library(readxl)
+library(dplyr)
+library(reshape2)
+library(ggthemes)
+library(metagMisc)
+
+####beta_div####
+
+###import###
+setwd("C:/Users/fmodo/Documents/Analises-4-paired-UPDATE-08-11/outputs-qiime2/files-for-phyloseq/")
+
+ps <- qza_to_phyloseq(features = "table.qza",
+                      taxonomy = "classified_rep_seqs.qza", 
+                      metadata = "Complete-metadata-feather4.tsv",
+                      tree =  "rooted_tree.qza")
+
+
+
+
+##ocultar/retirar ASVs n?o desejadas na an?lise## 
+
+sub1 <- subset_taxa(ps, !Kingdom %in% c("Eukaryota", "Unassigned", "d__Eukaryota"))
+
+sub2 <- subset_taxa(sub1, !Phylum %in% c("Ciliophora"))
+
+sub2.2 <- subset_taxa(sub2, !Order %in% c("Chloroplast"))
+
+ps <- subset_taxa(sub2.2, !Family %in% c("Mitochondria"))
+
+############
+
+#extractiong non-normalized otu table
+flu.df.1<-phyloseq_to_df(ps, addtax = TRUE, addtot = FALSE, addmaxrank = FALSE, sorting = "taxonomy")
+View(flu.df.1)
+#write.table(flu.df.1, "/Users/fmodo/Documents/Analises-4-paired/Resultados/ASV_table-non-normalized.txt", sep = "\t")
+
+
+########
+
+dsd <-phyloseq_to_deseq2(ps, ~Portion2) 
+dsd
+
+cts <- counts(dsd)
+table(cts)
+geoMeans <- apply(cts, 1, function(row) if (all(row == 0)) 0 else exp(mean(log(row[row != 0]))))
+diagdds = estimateSizeFactors(dsd, geoMeans = geoMeans)
+dds = estimateDispersions(diagdds)
+
+vst<- varianceStabilizingTransformation(dds, blind=FALSE)
+
+deseq2 <- varianceStabilizingTransformation(dds, blind = TRUE, fitType = "parametric")
+vstMat<- assay(vst)
+vstMat[vstMat<0]<-0
+
+vst.otu.counts<-otu_table(vstMat, taxa_are_rows=TRUE)
+
+normalized <- ps # aqui voc? duplica o objeto para n?o precisar sobrepor
+otu_table(normalized) <- otu_table(vst.otu.counts)
+normalized
+
+
+#####extract the relative abundance
+library(dplyr)
+library(tidyr)
+
+###OTU level relabund
+df.otu <- normalized %>% transform_sample_counts(function(x) {x/sum(x)}) %>% psmelt() %>% 
+  arrange(OTU) %>% rename(ASV = OTU) %>% 
+  select(ASV, Kingdom, Phylum, Class, Order, Family, Genus, Species, Sample, Abundance) %>%
+  spread(Sample, Abundance)
+
+head(df.otu)
+
+write.table(df.otu, "/Users/fmodo/Documents/Analises-4-paired-UPDATE-08-11/Resultados/RelAbund.OTU.txt", sep = "\t")
+
+########Family level relabund
+df.fam <- normalized %>% tax_glom(taxrank = "Family") %>% 
+  transform_sample_counts(function(x) {x/sum(x)}) %>%
+  psmelt() %>% select(OTU, Family, Sample, Abundance) %>% 
+  spread(Sample, Abundance) 
+
+head(df.fam)
+
+
+write.table(df.fam, "/Users/fmodo/Documents/Analises-4-paired-UPDATE-08-11/Resultados/RelAbund.FAMILY.txt", sep = "\t")
+
+
+
+###sorenson todos
+bray_pcoa.all <- ordinate(physeq = normalized, method = "PCoA", distance = "bray", birary = T)
+
+ordplot.all <- plot_ordination(physeq = normalized, ordination = bray_pcoa.all, color = "Portion2") 
+
+ordplot.all 
+
+p.all = ordplot.all  + geom_point(size = 2) + theme_classic()
+
+p.all = p.all + scale_color_tableau("Tableau 10")
+
+p.all <- p.all + scale_color_manual(values=c( "#4e79a7", "#ff9933", "#9e32a8","#a83253",  "#3432a8",  "#a88332",  "#3ea832"))
+#"#4e79a7", "#ff9933", "#3432a8", "#a88332", "#9e32a8", "#a83253","#3ea832"
+
+p.all <- p.all + stat_ellipse(type = "t", linetype = 100)
+
+p.all <- p.all +  theme(text = element_text(size = 16), legend.position = c(0.16, 0.22))
+
+p.all
+
+ggsave(filename = "C:/Users/fmodo/Documents/Analises-4-paired-UPDATE-08-11/Resultados/Beta_div/pcoa-all.png", plot = p.all,
+       width = 8.2, height = 6, dpi = 600)
+
+##subset samples coral
+sample_variables(normalized)
+
+phy_coral <- subset_samples(normalized, Sample.type %in% c("Coral", "Seawater"))
+
+bray_nmds.coral <- ordinate(physeq = phy_coral, method = "PCoA", distance = "bray", birary = T)
+
+ordplot.coral <- plot_ordination(physeq = phy_coral, ordination = bray_nmds.coral, color = "Portion2") 
+
+ordplot.coral 
+
+p.coral = ordplot.coral + geom_point(size = 2) + theme_classic()
+
+p.coral = p.coral + scale_color_tableau("Tableau 10")
+
+p.coral = p.coral + theme(text = element_text(size = 16), legend.position = c(0.88, 0.15))
+
+p.coral = p.coral + scale_color_manual(values=c( "#3432a8", "#3ea832", "#a88332" ))
+
+p.coral <- p.coral + stat_ellipse(type = "t", linetype = 100)
+p.coral
+
+##subset samples crinoid
+sample_variables(normalized)
+
+phy_cri <- subset_samples(normalized, Sample.type %in% c("Crinoid", "Seawater"))
+
+bray_nmds.cri <- ordinate(physeq = phy_cri, method = "PCoA", distance = "bray", birary = T)
+
+ordplot.cri <- plot_ordination(physeq = phy_cri, ordination = bray_nmds.cri, color = "Portion2") 
+
+ordplot.cri
+
+p.cri = ordplot.cri + geom_point(size = 2) + theme_classic()
+
+p.cri = p.cri + scale_color_tableau("Tableau 10")
+
+p.cri = p.cri + scale_color_manual(values=c("#4e79a7", "#ff9933",  "#9e32a8", "#a83253", "#3ea832", "#a88332", "#3432a8" ))
+
+p.cri = p.cri + theme(text = element_text(size = 16), legend.position = c(0.88, 0.2))
+
+p.cri <- p.cri + stat_ellipse(type = "t", linetype = 100)
+p.cri
+
+cow <- cowplot::plot_grid(p.cri, p.coral, nrow = 1, align = "h", axis = "b", rel_widths = 1:1)
+cow
+
+ggsave(filename = "C:/Users/fmodo/Documents/Analises-4-paired-UPDATE-08-11/Resultados/Beta_div/cow-cri.cor.png", plot = cow,
+       width = 12.5, height = 6, dpi = 600)
+
+##############Coral############
+###############################
+
+# Testes estat?sticos Coral
+bray_dist.coral <- phyloseq::distance(phy_coral, method="bray", binary = T)
+sd.table <- data.frame(sample_data(phy_coral))
+
+# Adonis -> permanova
+adonis2(bray_dist.coral ~ Portion2, data = sd.table)
+
+# Anosim
+dist <- anosim(bray_dist.coral, sd.table$Portion2, permutations = 999)
+summary(dist)
+
+# Betadisper e Anova
+betadisper(bray_dist.coral, sd.table$Portion2)
+anova(betadisper(bray_dist.coral, sd.table$Portion2))
+
+# Pairwise.adonis
+pairwise.adonis2(bray_dist.coral ~ Portion2, data = sd.table)
+
+
+##########Crinoid##########
+############################
+
+# Testes estat?sticos Crinoid
+bray_dist.cri <- phyloseq::distance(phy_cri, method="bray", binary = T)
+sd.table <- data.frame(sample_data(phy_cri))
+
+# Adonis -> permanova
+adonis2(bray_dist.cri ~ Portion2, data = sd.table)
+
+# Anosim
+dist <- anosim(bray_dist.cri, sd.table$Portion2, permutations = 999)
+summary(dist)
+
+# Betadisper e Anova
+permdisp <- betadisper(bray_dist.cri, sd.table$Portion2)
+anova(betadisper(bray_dist.cri, sd.table$Portion2))
+permdisp
+plot(permdisp)
+anova(permdisp)
+tuk.perm.sor <- TukeyHSD(permdisp)
+print(tuk.perm.sor)
+
+
+# Pairwise.adonis
+pairwise.adonis2(bray_dist.cri ~ Portion2, data = sd.table)
+
+##########All samples##########
+############################
+
+# Testes estat?sticos all samples
+bray_dist.all <- phyloseq::distance(normalized, method="bray", binary = T)
+sd.table <- data.frame(sample_data(normalized))
+
+# Adonis -> permanova
+adonis2(bray_dist.all ~ Portion2, data = sd.table)
+
+# Anosim
+dist <- anosim(bray_dist.all, sd.table$Portion2, permutations = 999)
+summary(dist)
+
+# Betadisper e Anova
+permdisp <- betadisper(bray_dist.all, sd.table$Portion2)
+anova(betadisper(bray_dist.all, sd.table$Portion2))
+permdisp
+plot(permdisp)
+anova(permdisp)
+tuk.perm.sor <- TukeyHSD(permdisp)
+print(tuk.perm.sor)
+
+
+# Pairwise.adonis
+pairwise.adonis2(bray_dist.all ~ Portion2, data = sd.table)
+
+
+
+
+####################################################################
+###################################################################
+##########TAXAPLOT################################################
+
+
+nor.fami <- tax_glom(normalized, "Family")
+nor.fami.ra  = transform_sample_counts(nor.fami,
+                                       function(x) x / sum(x))
+
+nor.fami.ra.top = filter_taxa(nor.fami.ra,
+                              function(x) mean(x) > 1e-2,
+                              TRUE) #aqui determina a quantidade de ASV analisadas - 1e-2 = 0.01, ou 1%
+
+nor.fami.ra.top.ra = transform_sample_counts(nor.fami.ra.top,
+                                             function(x) x / sum(x))
+
+nor.fami.ra.top.ra.prune = prune_taxa(names(sort(taxa_sums(nor.fami.ra.top.ra),
+                                                 TRUE)) [1:10],nor.fami.ra.top.ra)
+
+sample_data(nor.fami.ra.top.ra.prune)$order <- factor(sample_data(nor.fami.ra.top.ra.prune)$Portion2, levels =c( "Arms", "Calyx-cirri", "S_Arms", "S_Calyx-cirri", "D.pertusum", "Solenosmilia", "Seawater"))
+
+plot_bar <- plot_bar(nor.fami.ra.top.ra.prune, x="Sample" ,fill="Family") +
+  facet_grid (rows = ~order, scales = "free_x", space = "free")
+#plot_bar <- plot_bar + theme(legend.position = "bottom")
+plot_bar = plot_bar + theme(text = element_text(size = 16))
+
+labs(fill="Family")+ 
+  xlab("Sample") + 
+  ylab("Relative Abundance") + 
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5, size=9, color = "black"),
+        axis.text.y = element_text(size=9, color = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.title = element_text(size = 9, face = "bold"),
+        legend.text = element_text(size = 8),
+        legend.title = element_text(face = "bold", size = 9, color = "black"),
+        strip.text.x = element_text(face = "plain", size = 9, color = "black"))+
+  scale_x_discrete(limits=c("C9", "C65","C79","C84","C20","C5","C1","C2","C24","C22","C33","C44","C59","C78",
+                            "C68","C72","C95","C85",
+                            "C41","C43","C56",
+                            "C37","C58",
+                            "A6","A7","A8","A9","A10","A11","A12","A13","A14","A15","A16",
+                            "C53", "C61","C40","C45","C72","C92")
+  )
+
+
+
+#plot_bar = plot_bar + scale_color_lancet() 
+
+plot_bar
+
+ggsave(filename = "C:/Users/fmodo/Documents/Analises-4-paired-UPDATE-08-11/Resultados/Beta_div/taxaplot.flat.png", plot = plot_bar,
+       width = 17, height = 3, dpi = 600)
+
+
