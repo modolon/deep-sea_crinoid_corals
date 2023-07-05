@@ -1,0 +1,26 @@
+library(indicspecies)
+library(phyloseq)
+library(qiime2R)
+library(metagMisc)
+
+
+##importando os dados
+
+
+#################
+#PARA IMPORTAR A TABELA, PEGA A TABELA DE ASVS NORMALIZADA, INCLUI A VARI?VEL Portion2 E TRANSP?E
+#antes de transpor, renomeei cada ASV para facilitar track as asvs posteriormente
+#salvei uma tabela com os nomes originais e os novos nomes, just in case
+#SALVA EM TSV, NUM .txt E UPA
+Flu.df2 <- read.table("/Users/fmodo/Documents/Analises-4-paired-UPDATE-08-11/Resultados/Indicspecies/Flu-df-2-edited.txt")
+##usando indicspecies
+
+abund = Flu.df2[,3:ncol(Flu.df2)]
+Source = Flu.df2$Sample
+Source
+
+###indicspecies
+inv.g = multipatt(abund, Source, func = "IndVal.g", control = how(nperm=999))
+
+###summamry
+summary(inv.g, alpha=0.05, indvalcomp=TRUE)
