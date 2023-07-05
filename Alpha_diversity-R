@@ -1,0 +1,249 @@
+library(qiime2R)
+library(phyloseq)
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(gplots)
+library(vegan)
+library(DESeq2)
+library(readxl)
+library(dplyr)
+library(reshape2)
+library(ggthemes)
+
+####alfa_div####
+
+###import###
+setwd("C:/Users/fmodo/Documents/Analises-4-paired-UPDATE-08-11/outputs-qiime2/files-for-phyloseq/")
+
+ps <- qza_to_phyloseq(features = "table.qza",
+                      taxonomy = "classified_rep_seqs.qza", 
+                      metadata = "Complete-metadata-feather4.tsv",
+                      tree =  "rooted_tree.qza")
+
+##ocultar/retirar ASVs n?o desejadas na an?lise## 
+
+sub1 <- subset_taxa(ps, !Kingdom %in% c("Eukaryota", "Unassigned", "d__Eukaryota"))
+
+sub2 <- subset_taxa(sub1, !Phylum %in% c("Ciliophora"))
+
+sub2.2 <- subset_taxa(sub2, !Order %in% c("Chloroplast"))
+
+ps <- subset_taxa(sub2.2, !Family %in% c("Mitochondria"))
+
+############olhando as amostras antes de rarefazer os dados##############
+
+# Verificar o numero de sequencias por amostra
+sort(sample_sums(ps))
+
+hist(sample_sums(ps), main="Histogram: Read Counts", xlab="Total Reads", 
+     border="blue", col="green", las=1, breaks=12)
+
+
+# Observar curva de rarefa??o
+#' step = intervalo de c?lculo (Quanto menor, mais detalhado ser?. Isso ir? aumentar muito o tempo de processamento dependendo do tamanho do seu conjunto de dados)
+#' sample = posi??o no eixo x (n?mero de sequencias) onde se pretende adicionar linhas para demarcar um ponto (substitua pelos valores que fazem sentido para seus dados)
+#' Os intervalos selecionados em "sample" podem ser escolhidos com base no numero de sequencias observado no comando "sort(sample_sums(ps))"
+#' cex e lwd s?o parametros gr?ficos
+
+
+mat <- as(t(otu_table(ps)), "matrix")
+class(mat)
+
+raremax <- min(rowSums(mat))
+raremax
+
+system.time(rarecurve(mat, step = 100, sample = raremax, col = "blue", label = FALSE, cex = 1, lwd = 1))
+
+
+#rarecurve(t(otu_table(ps)), step = 100, sample = c(14931, 96602), cex = 1, lwd = 1)
+
+#' Observar a diferen?a na riqueza de especies entre os dados brutos e rarefeitos
+#' A fun??o specnumber vai retorna a riqueza das amostras
+#' A fun??o rarefy_even_depth vai subselecionar o n?mero de sequencias escolhido (rarefa??o). 
+#' sample.size = min(sample_sums(ps)) == Nesse caso estamos informando para subselecionar para o n?mero m?nimo de sequencias observado entre as amostras.
+
+S <- specnumber(t(otu_table(ps))) # N?mero de esp?cies observado nos dados originais
+ps.rare <- rarefy_even_depth(ps, sample.size = min(sample_sums(ps)))
+Srare <- specnumber(t(otu_table(ps.rare))) # N?mero de esp?cies observados nos dados rarefeitos
+Srare
+S
+
+
+######verificando o numero de sequencias por amostra nos dados rarefeitos
+
+sort(sample_sums(ps.rare))
+
+hist(sample_sums(ps.rare), main="Histogram: Read Counts", xlab="Total Reads", 
+     border="blue", col="green", las=1, breaks=12)
+
+# Observar a diferen?a na riqueza entre os dados (original vs rarefeita)
+#' Nota: ? esperado que a profundidade de rarefa??o escolhida para esse conjunto de dados (GlobalPatterns) fa?a com que esp?cies sejam perdidas, isso ocorre porque a profundidade
+#' de sequenciamento da maioria das amostras ? alta e o numero de sequencias selecionado (o m?nimo identicado entre as amostras) ? muito pequeno. Transponha essa observa??o para seus dados
+#' para decidir se manter uma amostra com poucas sequencias vale a pena frente a perda de diversidade.
+
+plot(S, Srare, xlab = "Observed No. of Species", ylab = "Rarefied No. of Species")
+abline(0, 1)
+
+
+#' Calcular indices de diversidade
+#' Usando a configura??o abaixo ? poss?vel calcula o indice e adicion?-lo como uma nova coluna em sem arquivo sample_data()
+#' A fun??o estimate_richness() permite o c?lculo de outros indices de diversidade. Observe o arquivo de ajuda para saber como calcular. 
+
+sample_data(ps.rare)$Chao1 <- estimate_richness(ps.rare, measures="Chao1", split = TRUE)[,1]
+sample_data(ps.rare)$Shannon <- estimate_richness(ps.rare, measures="Shannon", split = TRUE)[,1]
+sample_data(ps.rare)$Observed <- estimate_richness(ps.rare,measures="Observed", split = TRUE)[,1]
+#sample_data(ps.rare)$Shannon_Evenness <- estimate_richness(ps.rare,measures="Shannon_Evenness", split = TRUE)[,1]
+
+ps.rare
+
+#evenness measuring
+H <- sample_data(ps.rare)$Shannon
+S1 <- sample_data(ps.rare)$Observed
+S <- log(S1, base = exp(1))
+evenness <- H/S
+evenness
+
+#insert in the phyloseq object
+sample_data(ps.rare)$Evenness <- evenness
+
+#insert in the alpha object
+
+alpha <- estimate_richness(ps.rare, measures = c("Shannon", "Observed", 'Chao1'))
+alpha$Evenness <- sample_data(ps.rare)$Evenness
+alpha$Portion2 <- sample_data(ps.rare)$Portion2
+
+alpha
+
+#Plot evenness
+plot.even <- ggplot(alpha, aes(x = Portion2, y = Evenness, color = Portion2, fill = Portion2)) +
+ geom_boxplot(outlier.shape=1,
+              outlier.size=1) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, size=10, color = "black"))
+ 
+plot.even = plot.even  + scale_color_manual(values=c("black", "black", "black", "black", "black", "black", "black" ))
+  #scale_color_manual(values=c("#4e79a7", "#ff9933", "#3432a8", "#9e32a8", "#a83253", "#3ea832", "#a88332" ))
+#organizando a ordem das amostras
+plot.even = plot.even + scale_x_discrete(limits=c("Arms", "Calyx-cirri", "S_Arms", "S_Calyx-cirri", "D.pertusum", "S.variabilis", "Seawater"))
+plot.even = plot.even + scale_fill_manual(values=c("#4e79a7", "#ff9933", "#9e32a8", "#a83253", "#3432a8", "#a88332", "#3ea832" ))
+plot.even = plot.even + stat_summary(fun=mean, geom="point", shape=19, size=2)
+plot.even = plot.even + theme(legend.position = "none")
+plot.even
+
+
+ggsave(filename = "C:/Users/fmodo/Documents/Analises-4-paired-UPDATE-08-11/Resultados/Alpha_div/plot.even.png", plot = plot.even,
+       width = 8.2, height = 6, dpi = 600)
+
+####plot Chao1
+plot.chao <- ggplot(alpha, aes(x = Portion2, y = Chao1, color = Portion2, fill = Portion2)) +
+  geom_boxplot(outlier.shape=1,
+               outlier.size=1) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, size=10, color = "black"))
+
+plot.chao = plot.chao  + scale_color_manual(values=c("black", "black", "black", "black", "black", "black", "black" ))
+#scale_color_manual(values=c("#4e79a7", "#ff9933", "#3432a8", "#9e32a8", "#a83253", "#3ea832", "#a88332" ))
+plot.chao = plot.chao + scale_fill_manual(values=c("#4e79a7", "#ff9933", "#3432a8", "#9e32a8", "#a83253", "#3ea832", "#a88332" ))
+#organizando a ordem das amostras
+plot.chao = plot.chao + scale_x_discrete(limits=c("Arms", "Calyx-cirri", "S_Arms", "S_Calyx-cirri", "D.pertusum", "Solenosmilia", "Seawater"))
+plot.chao = plot.chao + stat_summary(fun=mean, geom="point", shape=19, size=2)
+plot.chao = plot.chao + theme(legend.position = "none")
+plot.chao
+
+
+###Plot Shannon
+
+plot.shan <- ggplot(alpha, aes(x = Portion2, y = Shannon, color = Portion2, fill = Portion2)) +
+  geom_boxplot(outlier.shape=1,
+               outlier.size=1) +
+ theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 0.5, size=10, color = "black"))
+
+plot.shan = plot.shan  + scale_color_manual(values=c("black", "black", "black", "black", "black", "black", "black" ))
+#scale_color_manual(values=c("#4e79a7", "#ff9933", "#3432a8", "#9e32a8", "#a83253", "#3ea832", "#a88332" ))
+plot.shan = plot.shan + scale_fill_manual(values=c("#4e79a7", "#ff9933", "#3432a8", "#9e32a8", "#a83253", "#3ea832", "#a88332" ))
+#organizando a ordem das amostras
+plot.shan = plot.shan + scale_x_discrete(limits=c("Arms", "Calyx-cirri","S_Arms", "S_Calyx-cirri", "D.pertusum", "Solenosmilia", "Seawater"))
+plot.shan = plot.shan + stat_summary(fun=mean, geom="point", shape=19, size=2)
+plot.shan = plot.shan + theme(legend.position = "none")
+
+plot.shan
+
+cow <- cowplot::plot_grid(plot.chao, plot.shan, plot.even, nrow = 1, align = "h", axis = "b", rel_widths = 1:1)
+cow
+
+ggsave(filename = "C:/Users/fmodo/Documents/Analises-4-paired-UPDATE-08-11/Resultados/Alpha_div/chao-shan-pie2.png", plot = cow,
+      width = 17, height = 6, dpi = 600)
+
+
+
+######Exportando tabela alpha para calcular externamente
+write.table(alpha, "/Users/fmodo/Documents/Analises-4-paired-UPDATE-08-11/Resultados/Alpha_div/alpha-values.txt", sep = "\t")
+
+
+
+                   
+                   #######
+                 ad.test.df <- alpha[,c('Shannon', 'Evenness', 'Chao1')]
+                 ad.test.df <- cbind(ad.test.df,
+                                       sample_data(ps.rare)[, c('Portion2')])
+                 colnames(ad.test.df) <- c('Shannon', 'Evenness', 'Chao1', 'Portion2')
+                   
+                   
+                   ####testes####
+                   
+                   ##testar normalidade
+                   shapiro.test(ad.test.df$Shannon)
+                   shapiro.test(ad.test.df$Evenness)
+                   shapiro.test(ad.test.df$Chao1)
+                   
+                   #RESULTADO: MEUS DADOS NAO SAO NORMAIS
+                   
+                   ##se a distribui??o n?o for normal
+                   kruskal.shannon <- kruskal.test(Shannon ~ Portion2, data=ad.test.df)
+                   data.frame(unlist(kruskal.shannon))
+                   
+                  
+                   kruskal.invsimpson <- kruskal.test(InvSimpson ~ Portion2, data=ad.test.df)
+                   data.frame(unlist(kruskal.invsimpson))
+                   
+                   kruskal.Chao1 <-  kruskal.test(Chao1 ~ Portion2, data=ad.test.df)
+                   data.frame(unlist(kruskal.Chao1))
+                   
+                   ##se a distribui??o for normal
+                   test_anova_shannon <- aov(Shannon ~ Portion2, data=ad.test.df)
+                   summary(test_anova_shannon)
+                   
+                   test_anova_chao1 <- aov(Chao1 ~ Portion2, data=ad.test.df)
+                   summary(test_anova_chao1)
+                   
+                   test_anova_aven <- aov(Evenness ~ Portion2, data=ad.test.df)
+                   summary(test_anova_chao1)
+                   
+                   # Teste T
+                   t.test(Shannon ~ Portion2, data=ad.test.df)
+                   
+                   ## Mann-Whitney
+                   
+                   #wilcox.test(Shannon ~ Portion2, data=ad.test.df)
+                   
+                   pairwise.wilcox.test(ad.test.df$Shannon, ad.test.df$Portion2,
+                                        p.adjust.method = "BH")
+                   
+                   pairwise.wilcox.test(ad.test.df$Chao1, ad.test.df$Portion2,
+                                        p.adjust.method = "BH")
+                   
+                   pairwise.wilcox.test(ad.test.df$Evenness, ad.test.df$Portion2,
+                                        p.adjust.method = "BH")
+                   
+                   
+                   ######pairwise####
+                   
+                   TukeyHSD(test_anova_shannon)
+                   TukeyHSD(test_anova_chao1)
+                   TukeyHSD(test_anova_aven)
+                  
+                   
+                   #######
+                  
